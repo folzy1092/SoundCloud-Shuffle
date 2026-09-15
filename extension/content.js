@@ -44,12 +44,12 @@
     return result.context;
   }
 
-  async function replacePageQueue(document, trackIds) {
+  async function replacePageQueue(document, trackIds, tracks) {
     const result = await domRequest(
       document,
       'scshuffle:replace-queue',
       'scshuffle:queue-result',
-      { trackIds },
+      { trackIds, tracks },
       35000,
     );
     if (!result || !result.ok) {
@@ -88,7 +88,8 @@
 
     const request = options.request || runtimeRequest;
     const requestContext = options.requestContext || (() => requestPageContext(document));
-    const replaceQueue = options.replaceQueue || ((trackIds) => replacePageQueue(document, trackIds));
+    const replaceQueue = options.replaceQueue
+      || ((trackIds, tracks) => replacePageQueue(document, trackIds, tracks));
     const scheduleReset = options.scheduleReset || ((fn) => setTimeout(fn, 2200));
     const MutationObserverCtor = options.MutationObserver
       || global.MutationObserver;
@@ -210,15 +211,25 @@
         setStatus(button, 'Синхронизация…', true);
         showNotice('SoundCloud Shuffle: подготавливаю все лайки…');
         const context = await requestContext();
-        const response = await request({ type: 'REQUEST_FULL_SHUFFLE', context });
+        const response = await request({
+          type: 'REQUEST_FULL_SHUFFLE',
+          context,
+          includePayloads: true,
+        });
         if (!response?.ok) throw new Error(response?.error || genericError);
         if (!Array.isArray(response.tracks) || response.tracks.length === 0) {
           throw new Error('Нет доступных лайкнутых треков для перемешивания.');
         }
 
+        const trackIds = response.tracks.map((track) => track.id);
+        const payloads = Array.isArray(response.payloads) ? response.payloads : null;
+        if (payloads && payloads.length !== trackIds.length) {
+          throw new Error('Не удалось подготовить данные треков для очереди. Синхронизируйте лайки и попробуйте ещё раз.');
+        }
+
         setStatus(button, 'Перемешивание…', true);
         showNotice(`SoundCloud Shuffle: перемешиваю ${response.tracks.length} треков…`);
-        const result = await replaceQueue(response.tracks.map((track) => track.id));
+        const result = await replaceQueue(trackIds, payloads);
         if (!result?.ok) throw new Error(result?.error || genericError);
         const successText = `Перемешано: ${result.queuedCount} треков`;
         setStatus(button, successText, false);

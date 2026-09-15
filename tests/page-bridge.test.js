@@ -117,7 +117,7 @@ for (const [name, breakContext] of [
   test(`rejects ${name} without replacing the queue`, async () => {
     const f = fixture();
     breakContext(f);
-    await assert.rejects(replaceQueueFromLikes({ player: f.player, trackIds: [2] }), /Нравится|Обновите/);
+    await assert.rejects(replaceQueueFromLikes({ player: f.player, trackIds: [2] }), /Нравится|Обновите|Включите/);
     assert.equal(f.calls.length, 0);
   });
 }

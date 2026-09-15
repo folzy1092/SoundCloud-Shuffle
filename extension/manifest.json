@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SoundCloud Shuffle by Folzy",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Полное случайное перемешивание всех доступных треков из SoundCloud Likes.",
   "permissions": ["storage"],
   "host_permissions": [

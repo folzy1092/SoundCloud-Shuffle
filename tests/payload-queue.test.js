@@ -61,21 +61,45 @@ test('replaceQueueFromPayloads hydrates native sounds and replaces once without 
   assert.deepEqual(replacements[0][2], { pause: true });
 });
 
-test('replaceQueueFromPayloads rejects non-Likes playback without touching the queue', async () => {
-  const current = {
-    sound: new FakeSound({ id: 1 }),
-    originalModel: { collection: { getSourceInfo: () => ({ type: 'playlist' }) } },
-  };
-  let replacements = 0;
+test('replaceQueueFromPayloads works when the current QueueItem has no original Likes collection', async () => {
+  const current = { sound: new FakeSound({ id: 1, title: 'current' }) };
+  const replacements = [];
   const player = {
     getCurrentQueueItem: () => current,
+    createExplicitQueueItem(sourceCollection, sound, context) {
+      assert.equal(sourceCollection, sound);
+      assert.equal(context, null);
+      return { sound };
+    },
+    replaceQueue(...args) {
+      replacements.push(args);
+    },
+  };
+
+  const result = await replaceQueueFromPayloads({
+    player,
+    tracks: [
+      { id: 1, title: 'current' },
+      { id: 2, title: 'next' },
+    ],
+  });
+
+  assert.deepEqual(result, { queuedCount: 1 });
+  assert.equal(replacements.length, 1);
+  assert.deepEqual(replacements[0][0].map((item) => item.sound.id), [1, 2]);
+});
+
+test('replaceQueueFromPayloads rejects when there is no current sound', async () => {
+  let replacements = 0;
+  const player = {
+    getCurrentQueueItem: () => ({ sound: null }),
     createExplicitQueueItem: () => ({ sound: new FakeSound({ id: 2 }) }),
     replaceQueue: () => { replacements += 1; },
   };
 
   await assert.rejects(
     replaceQueueFromPayloads({ player, tracks: [{ id: 2 }] }),
-    /Нравится/,
+    /Включите любой трек/,
   );
   assert.equal(replacements, 0);
 });

@@ -210,21 +210,123 @@
     }
   }
 
-  function capturePlayer(page) {
-    let requireModule;
-    const id = `scshuffle_bridge_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const modules = { [id]: (_module, _exports, runtime) => { requireModule = runtime; } };
-    try {
-      if (typeof page.webpackJsonp === 'function') page.webpackJsonp([], modules, [id]);
-      else if (typeof page.webpackJsonp?.push === 'function') page.webpackJsonp.push([[], modules, [[id]]]);
-      if (typeof requireModule !== 'function') throw new Error();
-      return requireModule.c?.[20]?.exports || requireModule(20);
-    } catch {
-      throw new Error(errors.player);
-    } finally {
-      if (requireModule?.m) delete requireModule.m[id];
-      if (requireModule?.c) delete requireModule.c[id];
+  function unwrapModule(value, depth = 5) {
+    if (!value || depth < 0) return value;
+    if (value.exports && value.exports !== value) return unwrapModule(value.exports, depth - 1);
+    if (value.A) return unwrapModule(value.A, depth - 1);
+    if (value.Z) return unwrapModule(value.Z, depth - 1);
+    if (value.ZP) return unwrapModule(value.ZP, depth - 1);
+    if (value.__esModule && value.default) return unwrapModule(value.default, depth - 1);
+    return value;
+  }
+
+  function isQueuePlayer(candidate) {
+    const value = unwrapModule(candidate);
+    return Boolean(value) && ['getCurrentQueueItem', 'createExplicitQueueItem', 'replaceQueue']
+      .every((name) => typeof value[name] === 'function');
+  }
+
+  function findPlayerInRequire(requireModule) {
+    if (typeof requireModule !== 'function') return null;
+
+    const cached = requireModule.c;
+    if (cached && typeof cached === 'object') {
+      for (const module of Object.values(cached)) {
+        const candidate = unwrapModule(module);
+        if (isQueuePlayer(candidate)) return candidate;
+      }
     }
+
+    try {
+      const legacy = unwrapModule(cached?.[20]?.exports || requireModule(20));
+      if (isQueuePlayer(legacy)) return legacy;
+    } catch {
+      // SoundCloud no longer guarantees stable numeric module IDs.
+    }
+
+    const factories = requireModule.m;
+    if (factories && typeof factories === 'object') {
+      for (const id of Object.keys(factories)) {
+        try {
+          const candidate = unwrapModule(requireModule(id));
+          if (isQueuePlayer(candidate)) return candidate;
+        } catch {
+          // Some modules require initialization state that is not available here.
+        }
+      }
+    }
+    return null;
+  }
+
+  function captureLegacyRequire(page) {
+    let requireModule = null;
+    let injectedId = null;
+    try {
+      injectedId = `scshuffle_bridge_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const modules = {
+        [injectedId]: (module, _exports, runtime) => {
+          if (typeof runtime === 'function') requireModule = runtime;
+          if (module && typeof runtime === 'function') module.exports = runtime;
+        },
+      };
+      if (typeof page.webpackJsonp === 'function') {
+        page.webpackJsonp([], modules, [injectedId]);
+      } else if (typeof page.webpackJsonp?.push === 'function') {
+        const returned = page.webpackJsonp.push([[injectedId], modules, [[injectedId]]]);
+        if (!requireModule && typeof returned === 'function') requireModule = returned;
+        page.webpackJsonp.pop?.();
+      }
+      return requireModule;
+    } catch {
+      return null;
+    } finally {
+      if (requireModule?.m && injectedId) delete requireModule.m[injectedId];
+      if (requireModule?.c && injectedId) delete requireModule.c[injectedId];
+    }
+  }
+
+  function captureChunkRequire(chunkArray) {
+    if (!chunkArray || typeof chunkArray.push !== 'function') return null;
+    let requireModule = null;
+    try {
+      const id = `scshuffle_chunk_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      chunkArray.push([
+        [id],
+        {},
+        (runtime) => { if (typeof runtime === 'function') requireModule = runtime; },
+      ]);
+      chunkArray.pop?.();
+    } catch {
+      return null;
+    }
+    return requireModule;
+  }
+
+  function captureStandbyRequire(page) {
+    try {
+      const frame = page.document?.querySelector?.('iframe[src*="/n/pages/standby"]');
+      return captureChunkRequire(frame?.contentWindow?.webpackChunk_N_E);
+    } catch {
+      return null;
+    }
+  }
+
+  function capturePlayer(page) {
+    const runtimes = [];
+    const legacy = captureLegacyRequire(page);
+    if (legacy) runtimes.push(legacy);
+
+    const mainNext = captureChunkRequire(page.webpackChunk_N_E);
+    if (mainNext && !runtimes.includes(mainNext)) runtimes.push(mainNext);
+
+    const standby = captureStandbyRequire(page);
+    if (standby && !runtimes.includes(standby)) runtimes.push(standby);
+
+    for (const requireModule of runtimes) {
+      const player = findPlayerInRequire(requireModule);
+      if (player) return player;
+    }
+    throw new Error(errors.player);
   }
 
   function registerPageBridge(page) {
@@ -257,7 +359,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { replaceQueueFromLikes, getPageContext };
+    module.exports = { replaceQueueFromLikes, getPageContext, capturePlayer };
   }
   if (typeof window !== 'undefined' && window.document) registerPageBridge(window);
 }());

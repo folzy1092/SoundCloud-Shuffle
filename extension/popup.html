@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SoundCloud Shuffle by Folzy</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup">
+      <header>
+        <div class="eyebrow">FULL LIKES SHUFFLE</div>
+        <h1>SoundCloud Shuffle</h1>
+        <p>Полная случайная очередь из твоих лайков.</p>
+      </header>
+
+      <section id="status" class="status" aria-live="polite">Загрузка…</section>
+
+      <div class="actions">
+        <button id="sync" type="button">Синхронизировать</button>
+        <button id="clear" class="secondary" type="button">Очистить данные</button>
+      </div>
+
+      <p class="hint">Для Shuffle включи любой свой лайкнутый трек и нажми штатную кнопку Shuffle в SoundCloud.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

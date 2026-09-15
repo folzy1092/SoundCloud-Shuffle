@@ -171,8 +171,67 @@
     throw lastError || new Error(errors.pageContext);
   }
 
-  async function replaceQueueFromLikes({ player, trackIds } = {}) {
+  function soundId(sound) {
+    return asId(sound?.id) || asId(sound?.get?.('id'));
+  }
+
+  function soundFromPayload(current, payload) {
+    if (!payload || typeof payload !== 'object' || !validId(payload.id)) {
+      throw new Error(errors.tracks);
+    }
+    const SoundCtor = current?.sound?.constructor;
+    if (typeof SoundCtor !== 'function') throw new Error(errors.player);
+    let attrs = payload;
     try {
+      if (typeof SoundCtor.normalize === 'function') attrs = SoundCtor.normalize(payload);
+      const sound = new SoundCtor(attrs);
+      if (soundId(sound) !== String(payload.id)) throw new Error();
+      return sound;
+    } catch {
+      throw new Error(errors.player);
+    }
+  }
+
+  async function replaceQueueFromPayloads({ player, tracks } = {}) {
+    if (!player || ['getCurrentQueueItem', 'createExplicitQueueItem', 'replaceQueue']
+      .some((name) => typeof player[name] !== 'function')) throw new Error(errors.player);
+    if (!Array.isArray(tracks) || !tracks.length
+      || tracks.some((track) => !track || !validId(track.id))
+      || new Set(tracks.map((track) => String(track.id))).size !== tracks.length) {
+      throw new Error(errors.tracks);
+    }
+
+    const current = player.getCurrentQueueItem();
+    const currentId = soundId(current?.sound);
+    const likes = current?.originalModel?.collection;
+    if (!currentId || !likes || typeof likes.getSourceInfo !== 'function') {
+      throw new Error(errors.context);
+    }
+    const sourceInfo = likes.getSourceInfo();
+    if (sourceInfo?.type !== 'user-track_likes') throw new Error(errors.context);
+
+    const items = tracks
+      .filter((track) => String(track.id) !== currentId)
+      .map((payload) => {
+        const sound = soundFromPayload(current, payload);
+        const item = player.createExplicitQueueItem(sound, sound, null);
+        if (!item?.sound || soundId(item.sound) !== String(payload.id)) {
+          throw new Error(errors.player);
+        }
+        return item;
+      });
+
+    if (player.getCurrentQueueItem() !== current) throw new Error(errors.changed);
+    player.replaceQueue([current, ...items], 0, { pause: true });
+    return { queuedCount: items.length };
+  }
+
+  async function replaceQueueFromLikes({ player, trackIds, tracks } = {}) {
+    try {
+      if (Array.isArray(tracks) && tracks.length > 0) {
+        return await replaceQueueFromPayloads({ player, tracks });
+      }
+
       if (!player || ['getCurrentQueueItem', 'createExplicitQueueItem', 'replaceQueue']
         .some((name) => typeof player[name] !== 'function')) throw new Error(errors.player);
       if (!Array.isArray(trackIds) || !trackIds.length || !trackIds.every(validId)
@@ -346,11 +405,15 @@
     });
 
     page.document.addEventListener('scshuffle:replace-queue', async (event) => {
-      const { requestId, trackIds } = event.detail || {};
+      const { requestId, trackIds, tracks } = event.detail || {};
       let result;
       try {
         const player = capturePlayer(page);
-        result = { requestId, ok: true, ...await replaceQueueFromLikes({ player, trackIds }) };
+        result = {
+          requestId,
+          ok: true,
+          ...await replaceQueueFromLikes({ player, trackIds, tracks }),
+        };
       } catch (error) {
         result = { requestId, ok: false, queuedCount: 0, error: error.message || errors.player };
       }
@@ -359,7 +422,12 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { replaceQueueFromLikes, getPageContext, capturePlayer };
+    module.exports = {
+      replaceQueueFromLikes,
+      replaceQueueFromPayloads,
+      getPageContext,
+      capturePlayer,
+    };
   }
   if (typeof window !== 'undefined' && window.document) registerPageBridge(window);
 }());

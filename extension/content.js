@@ -97,7 +97,50 @@
     let activeButton = null;
     let activeStatus = null;
     let resetGeneration = 0;
+    let notice = null;
+    let noticeTimer = null;
     const originals = new WeakMap();
+
+    function ensureNotice() {
+      if (notice?.isConnected) return notice;
+      if (typeof document.createElement !== 'function') return null;
+      const host = document.body || document.documentElement;
+      if (!host?.appendChild) return null;
+      notice = document.createElement('div');
+      notice.id = 'scshuffle-status';
+      notice.setAttribute?.('role', 'status');
+      notice.style.position = 'fixed';
+      notice.style.left = '50%';
+      notice.style.bottom = '74px';
+      notice.style.transform = 'translateX(-50%)';
+      notice.style.zIndex = '2147483647';
+      notice.style.maxWidth = 'min(520px, calc(100vw - 32px))';
+      notice.style.padding = '10px 14px';
+      notice.style.borderRadius = '8px';
+      notice.style.background = 'rgba(20, 20, 20, .96)';
+      notice.style.color = '#fff';
+      notice.style.font = '600 13px/1.35 system-ui, sans-serif';
+      notice.style.boxShadow = '0 8px 28px rgba(0,0,0,.35)';
+      notice.style.pointerEvents = 'none';
+      notice.style.opacity = '0';
+      notice.style.transition = 'opacity .15s ease';
+      host.appendChild(notice);
+      return notice;
+    }
+
+    function showNotice(text, isError = false, autoHideMs = 0) {
+      const element = ensureNotice();
+      if (!element) return;
+      if (noticeTimer) clearTimeout(noticeTimer);
+      element.textContent = text;
+      element.style.border = `1px solid ${isError ? 'rgba(255,90,90,.55)' : 'rgba(255,85,0,.55)'}`;
+      element.style.opacity = '1';
+      if (autoHideMs > 0) {
+        noticeTimer = setTimeout(() => {
+          if (notice) notice.style.opacity = '0';
+        }, autoHideMs);
+      }
+    }
 
     function remember(button) {
       if (!button || originals.has(button)) return;
@@ -165,6 +208,7 @@
       const generation = ++resetGeneration;
       try {
         setStatus(button, 'Синхронизация…', true);
+        showNotice('SoundCloud Shuffle: подготавливаю все лайки…');
         const context = await requestContext();
         const response = await request({ type: 'REQUEST_FULL_SHUFFLE', context });
         if (!response?.ok) throw new Error(response?.error || genericError);
@@ -173,11 +217,17 @@
         }
 
         setStatus(button, 'Перемешивание…', true);
+        showNotice(`SoundCloud Shuffle: перемешиваю ${response.tracks.length} треков…`);
         const result = await replaceQueue(response.tracks.map((track) => track.id));
         if (!result?.ok) throw new Error(result?.error || genericError);
-        setStatus(button, `Перемешано: ${result.queuedCount} треков`, false);
+        const successText = `Перемешано: ${result.queuedCount} треков`;
+        setStatus(button, successText, false);
+        showNotice(`SoundCloud Shuffle: ${successText}`, false, 2600);
       } catch (error) {
-        setStatus(button, normalizeError(error), false);
+        const message = normalizeError(error);
+        setStatus(button, message, false);
+        showNotice(`SoundCloud Shuffle: ${message}`, true, 5000);
+        console.error('[SoundCloud Shuffle]', error);
       } finally {
         busy = false;
         if (activeButton) activeButton.removeAttribute?.('aria-busy');
@@ -202,6 +252,9 @@
         document.removeEventListener?.('click', onClick, true);
         observer?.disconnect?.();
         restoreAll();
+        if (noticeTimer) clearTimeout(noticeTimer);
+        notice?.remove?.();
+        notice = null;
       },
       isBusy() { return busy; },
     };

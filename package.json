@@ -1,0 +1,7 @@
+{
+  "name": "soundcloud-shuffle-by-folzy",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

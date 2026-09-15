@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "SoundCloud Shuffle by Folzy",
+  "version": "0.1.2",
+  "description": "Полное случайное перемешивание всех доступных треков из SoundCloud Likes.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://api-v2.soundcloud.com/*",
+    "https://soundcloud.com/*",
+    "https://*.soundcloud.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://soundcloud.com/*", "https://*.soundcloud.com/*"],
+      "js": ["content.js"],
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["https://soundcloud.com/*", "https://*.soundcloud.com/*"],
+      "js": ["page-bridge.js"],
+      "world": "MAIN"
+    }
+  ]
+}

@@ -2,6 +2,7 @@
   const SHUFFLE_SELECTOR = '.playControls__shuffle.playControls__control, .shuffleControl';
   const genericError = 'Не удалось выполнить полное перемешивание. Попробуйте ещё раз.';
   const contextError = 'Не удалось получить данные SoundCloud. Обновите страницу и попробуйте ещё раз.';
+  const invalidatedContextError = 'Расширение было обновлено. Обновите вкладку SoundCloud и попробуйте ещё раз.';
 
   function makeRequestId() {
     if (global.crypto && typeof global.crypto.randomUUID === 'function') {
@@ -60,24 +61,59 @@
 
   function runtimeRequest(message) {
     return new Promise((resolve, reject) => {
-      if (!global.chrome?.runtime?.sendMessage) {
-        reject(new Error(genericError));
-        return;
-      }
-      chrome.runtime.sendMessage(message, (response) => {
-        const lastError = chrome.runtime.lastError;
-        if (lastError) {
+      try {
+        if (!global.chrome?.runtime?.sendMessage) {
           reject(new Error(genericError));
           return;
         }
-        resolve(response);
-      });
+        chrome.runtime.sendMessage(message, (response) => {
+          try {
+            const lastError = chrome.runtime.lastError;
+            if (lastError) {
+              reject(new Error(lastError.message || genericError));
+              return;
+            }
+            resolve(response);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      } catch (error) {
+        reject(error);
+      }
     });
   }
 
+  function isExtensionContextInvalidated(error) {
+    const message = error && typeof error.message === 'string'
+      ? error.message
+      : String(error || '');
+    return /extension context invalidated/i.test(message);
+  }
+
   function normalizeError(error) {
+    if (isExtensionContextInvalidated(error)) return invalidatedContextError;
     const message = error && typeof error.message === 'string' ? error.message.trim() : '';
     return message || genericError;
+  }
+
+  function shuffleCachedPool(pool, random = Math.random) {
+    if (!pool || !Array.isArray(pool.tracks) || !Array.isArray(pool.payloads)
+      || pool.tracks.length === 0 || pool.tracks.length !== pool.payloads.length) {
+      return null;
+    }
+    const pairs = pool.tracks.map((track, index) => ({
+      track,
+      payload: pool.payloads[index],
+    }));
+    for (let i = pairs.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(random() * (i + 1));
+      [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
+    }
+    return {
+      tracks: pairs.map(({ track }) => track),
+      payloads: pairs.map(({ payload }) => payload),
+    };
   }
 
   function installShuffleInterceptor(options = {}) {
@@ -91,6 +127,7 @@
     const replaceQueue = options.replaceQueue
       || ((trackIds, tracks) => replacePageQueue(document, trackIds, tracks));
     const scheduleReset = options.scheduleReset || ((fn) => setTimeout(fn, 2200));
+    const random = options.random || Math.random;
     const MutationObserverCtor = options.MutationObserver
       || global.MutationObserver;
 
@@ -100,6 +137,7 @@
     let resetGeneration = 0;
     let notice = null;
     let noticeTimer = null;
+    let cachedShufflePool = null;
     const originals = new WeakMap();
 
     function ensureNotice() {
@@ -211,11 +249,24 @@
         setStatus(button, 'Синхронизация…', true);
         showNotice('SoundCloud Shuffle: подготавливаю все лайки…');
         const context = await requestContext();
-        const response = await request({
-          type: 'REQUEST_FULL_SHUFFLE',
-          context,
-          includePayloads: true,
-        });
+        let response;
+        try {
+          response = await request({
+            type: 'REQUEST_FULL_SHUFFLE',
+            context,
+            includePayloads: true,
+          });
+        } catch (error) {
+          if (!isExtensionContextInvalidated(error)) throw error;
+          const fallback = shuffleCachedPool(cachedShufflePool, random);
+          if (!fallback) throw new Error(invalidatedContextError);
+          response = {
+            ok: true,
+            tracks: fallback.tracks,
+            payloads: fallback.payloads,
+            localFallback: true,
+          };
+        }
         if (!response?.ok) throw new Error(response?.error || genericError);
         if (!Array.isArray(response.tracks) || response.tracks.length === 0) {
           throw new Error('Нет доступных лайкнутых треков для перемешивания.');
@@ -226,9 +277,17 @@
         if (payloads && payloads.length !== trackIds.length) {
           throw new Error('Не удалось подготовить данные треков для очереди. Синхронизируйте лайки и попробуйте ещё раз.');
         }
+        if (payloads) {
+          cachedShufflePool = {
+            tracks: response.tracks.slice(),
+            payloads: payloads.slice(),
+          };
+        }
 
         setStatus(button, 'Перемешивание…', true);
-        showNotice(`SoundCloud Shuffle: перемешиваю ${response.tracks.length} треков…`);
+        showNotice(response.localFallback
+          ? `SoundCloud Shuffle: повторно перемешиваю сохранённые ${response.tracks.length} треков…`
+          : `SoundCloud Shuffle: перемешиваю ${response.tracks.length} треков…`);
         const result = await replaceQueue(trackIds, payloads);
         if (!result?.ok) throw new Error(result?.error || genericError);
         const successText = `Перемешано: ${result.queuedCount} треков`;
@@ -266,6 +325,7 @@
         if (noticeTimer) clearTimeout(noticeTimer);
         notice?.remove?.();
         notice = null;
+        cachedShufflePool = null;
       },
       isBusy() { return busy; },
     };

@@ -1,7 +1,7 @@
 (function () {
   const errors = {
     player: 'Не удалось подготовить очередь SoundCloud. Обновите страницу и попробуйте ещё раз.',
-    context: 'Откройте «Нравится» и включите лайкнутый трек, затем повторите Shuffle.',
+    context: 'Включите любой трек SoundCloud и повторите Shuffle.',
     population: 'Не удалось полностью загрузить «Нравится». Откройте «Нравится» и попробуйте ещё раз.',
     tracks: 'Набор треков устарел или пуст. Синхронизируйте лайки и повторите Shuffle.',
     changed: 'Текущий трек изменился во время подготовки. Повторите Shuffle.',
@@ -203,12 +203,7 @@
 
     const current = player.getCurrentQueueItem();
     const currentId = soundId(current?.sound);
-    const likes = current?.originalModel?.collection;
-    if (!currentId || !likes || typeof likes.getSourceInfo !== 'function') {
-      throw new Error(errors.context);
-    }
-    const sourceInfo = likes.getSourceInfo();
-    if (sourceInfo?.type !== 'user-track_likes') throw new Error(errors.context);
+    if (!currentId || !current?.sound) throw new Error(errors.context);
 
     const items = tracks
       .filter((track) => String(track.id) !== currentId)

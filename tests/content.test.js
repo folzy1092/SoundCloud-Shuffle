@@ -146,3 +146,62 @@ test('intercepts the alternate .shuffleControl selector used by current SoundClo
   assert.equal(click.prevented, true);
   assert.equal(requests, 1);
 });
+
+test('reshuffles the last full payload pool locally when extension context becomes invalidated', async () => {
+  const button = fakeButton();
+  const document = fakeDocument(button);
+  const queueCalls = [];
+  let requests = 0;
+  installShuffleInterceptor({
+    document,
+    requestContext: async () => ({ accountId: '7', userId: '7', clientId: 'cid' }),
+    request: async () => {
+      requests += 1;
+      if (requests === 1) {
+        return {
+          ok: true,
+          tracks: [{ id: 1 }, { id: 2 }, { id: 3 }],
+          payloads: [{ id: 1, title: 'one' }, { id: 2, title: 'two' }, { id: 3, title: 'three' }],
+        };
+      }
+      throw new Error('Extension context invalidated.');
+    },
+    replaceQueue: async (trackIds, payloads) => {
+      queueCalls.push({ trackIds, payloads });
+      return { ok: true, queuedCount: trackIds.length };
+    },
+    random: () => 0,
+    scheduleReset: () => {},
+  });
+
+  const first = await document.click();
+  await first.pending;
+  const second = await document.click();
+  await second.pending;
+
+  assert.equal(requests, 2);
+  assert.equal(queueCalls.length, 2);
+  assert.deepEqual(queueCalls[1].trackIds, [2, 3, 1]);
+  assert.deepEqual(queueCalls[1].payloads.map((track) => track.id), [2, 3, 1]);
+  assert.match(button.title, /Перемешано/);
+  assert.doesNotMatch(button.title, /Extension context invalidated/i);
+});
+
+test('maps extension context invalidation to a refresh instruction when no local pool exists yet', async () => {
+  const button = fakeButton();
+  const document = fakeDocument(button);
+  let replacements = 0;
+  installShuffleInterceptor({
+    document,
+    requestContext: async () => ({ accountId: '7', userId: '7', clientId: 'cid' }),
+    request: async () => { throw new Error('Extension context invalidated.'); },
+    replaceQueue: async () => { replacements += 1; return { ok: true, queuedCount: 1 }; },
+    scheduleReset: () => {},
+  });
+
+  const click = await document.click();
+  await click.pending;
+  assert.equal(replacements, 0);
+  assert.match(button.title, /Обновите вкладку SoundCloud/);
+  assert.doesNotMatch(button.title, /Extension context invalidated/i);
+});
